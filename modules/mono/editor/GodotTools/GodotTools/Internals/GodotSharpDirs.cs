@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using Godot.NativeInterop;
 
 namespace GodotTools.Internals
@@ -11,17 +10,7 @@ namespace GodotTools.Internals
             {
                 Internal.godot_icall_GodotSharpDirs_ResMetadataDir(out godot_string dest);
                 using (dest)
-                    return Marshaling.mono_string_from_godot(dest);
-            }
-        }
-
-        public static string ResTempAssembliesBaseDir
-        {
-            get
-            {
-                Internal.godot_icall_GodotSharpDirs_ResTempAssembliesBaseDir(out godot_string dest);
-                using (dest)
-                    return Marshaling.mono_string_from_godot(dest);
+                    return Marshaling.ConvertStringToManaged(dest);
             }
         }
 
@@ -31,7 +20,7 @@ namespace GodotTools.Internals
             {
                 Internal.godot_icall_GodotSharpDirs_MonoUserDir(out godot_string dest);
                 using (dest)
-                    return Marshaling.mono_string_from_godot(dest);
+                    return Marshaling.ConvertStringToManaged(dest);
             }
         }
 
@@ -41,7 +30,7 @@ namespace GodotTools.Internals
             {
                 Internal.godot_icall_GodotSharpDirs_BuildLogsDirs(out godot_string dest);
                 using (dest)
-                    return Marshaling.mono_string_from_godot(dest);
+                    return Marshaling.ConvertStringToManaged(dest);
             }
         }
 
@@ -51,7 +40,7 @@ namespace GodotTools.Internals
             {
                 Internal.godot_icall_GodotSharpDirs_ProjectSlnPath(out godot_string dest);
                 using (dest)
-                    return Marshaling.mono_string_from_godot(dest);
+                    return Marshaling.ConvertStringToManaged(dest);
             }
         }
 
@@ -61,7 +50,7 @@ namespace GodotTools.Internals
             {
                 Internal.godot_icall_GodotSharpDirs_ProjectCsProjPath(out godot_string dest);
                 using (dest)
-                    return Marshaling.mono_string_from_godot(dest);
+                    return Marshaling.ConvertStringToManaged(dest);
             }
         }
 
@@ -71,7 +60,7 @@ namespace GodotTools.Internals
             {
                 Internal.godot_icall_GodotSharpDirs_DataEditorToolsDir(out godot_string dest);
                 using (dest)
-                    return Marshaling.mono_string_from_godot(dest);
+                    return Marshaling.ConvertStringToManaged(dest);
             }
         }
     }

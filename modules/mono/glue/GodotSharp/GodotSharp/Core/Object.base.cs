@@ -1,35 +1,65 @@
 using System;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using Godot.NativeInterop;
 
 namespace Godot
 {
     public partial class Object : IDisposable
     {
+        // The point of this thread local static field is to allow the engine to create
+        // managed instances using an existing native instance instead of creating a new one.
+        // This way user derived classes don't need to define a constructor that takes the
+        // native instance handle, which would be annoying.
+        // Previously we were using a different trick for this. We were assigning the handle
+        // field before calling the constructor. This is no longer viable now that we are
+        // using SafeHandle (or at least the IDE warns about unreachable code).
+        // Additionally, this new way will allow us to optimize the creation of new instances
+        // as we will be able to use source generators instead of reflection. It also doesn't
+        // come with the risk of  assuming undocumented compiler behavior (that fields without
+        // a value assigned in code won't be assigned a default one by the constructor).
+        [ThreadStatic] internal static IntPtr HandlePendingForNextInstance;
+
         private bool _disposed = false;
-        private Type _cachedType = typeof(Object);
+        private static readonly Type CachedType = typeof(Object);
 
         internal IntPtr NativePtr;
-        internal bool MemoryOwn;
+        private bool _memoryOwn;
+
+        private WeakReference<Object> _weakReferenceToSelf;
 
         public Object() : this(false)
         {
-            if (NativePtr == IntPtr.Zero)
+            unsafe
             {
-                unsafe
-                {
-                    NativePtr = NativeCtor();
-                }
+                _ConstructAndInitialize(NativeCtor, NativeName, CachedType, refCounted: false);
+            }
+        }
+
+        internal unsafe void _ConstructAndInitialize(
+            delegate* unmanaged<IntPtr> nativeCtor,
+            StringName nativeName,
+            Type cachedType,
+            bool refCounted
+        )
+        {
+            var handlePending = HandlePendingForNextInstance;
+
+            if (handlePending == IntPtr.Zero)
+            {
+                NativePtr = nativeCtor();
 
                 InteropUtils.TieManagedToUnmanaged(this, NativePtr,
-                    NativeName, refCounted: false, GetType(), _cachedType);
+                    nativeName, refCounted, GetType(), cachedType);
             }
             else
             {
+                NativePtr = handlePending;
+                HandlePendingForNextInstance = IntPtr.Zero;
                 InteropUtils.TieManagedToUnmanagedWithPreSetup(this, NativePtr);
             }
+
+            _weakReferenceToSelf = DisposablesTracker.RegisterGodotObject(this);
 
             _InitializeGodotScriptInstanceInternals();
         }
@@ -43,16 +73,13 @@ namespace Godot
             while (top != null && top != native)
             {
                 foreach (var eventSignal in top.GetEvents(
-                        BindingFlags.DeclaredOnly | BindingFlags.Instance |
-                        BindingFlags.NonPublic | BindingFlags.Public)
-                    .Where(ev => ev.GetCustomAttributes().OfType<SignalAttribute>().Any()))
+                                 BindingFlags.DeclaredOnly | BindingFlags.Instance |
+                                 BindingFlags.NonPublic | BindingFlags.Public)
+                             .Where(ev => ev.GetCustomAttributes().OfType<SignalAttribute>().Any()))
                 {
-                    unsafe
-                    {
-                        using var eventSignalName = new StringName(eventSignal.Name);
-                        godot_string_name eventSignalNameAux = eventSignalName.NativeValue;
-                        NativeFuncs.godotsharp_internal_object_connect_event_signal(NativePtr, &eventSignalNameAux);
-                    }
+                    using var eventSignalName = new StringName(eventSignal.Name);
+                    var eventSignalNameSelf = (godot_string_name)eventSignalName.NativeValue;
+                    NativeFuncs.godotsharp_internal_object_connect_event_signal(NativePtr, eventSignalNameSelf);
                 }
 
                 top = top.BaseType;
@@ -61,7 +88,7 @@ namespace Godot
 
         internal Object(bool memoryOwn)
         {
-            MemoryOwn = memoryOwn;
+            _memoryOwn = memoryOwn;
         }
 
         public IntPtr NativeInstance => NativePtr;
@@ -71,7 +98,12 @@ namespace Godot
             if (instance == null)
                 return IntPtr.Zero;
 
-            if (instance._disposed)
+            // We check if NativePtr is null because this may be called by the debugger.
+            // If the debugger puts a breakpoint in one of the base constructors, before
+            // NativePtr is assigned, that would result in UB or crashes when calling
+            // native functions that receive the pointer, which can happen because the
+            // debugger calls ToString() and tries to get the value of properties.
+            if (instance._disposed || instance.NativePtr == IntPtr.Zero)
                 throw new ObjectDisposedException(instance.GetType().FullName);
 
             return instance.NativePtr;
@@ -95,9 +127,8 @@ namespace Godot
 
             if (NativePtr != IntPtr.Zero)
             {
-                if (MemoryOwn)
+                if (_memoryOwn)
                 {
-                    MemoryOwn = false;
                     NativeFuncs.godotsharp_internal_refcounted_disposed(NativePtr, (!disposing).ToGodotBool());
                 }
                 else
@@ -108,14 +139,16 @@ namespace Godot
                 NativePtr = IntPtr.Zero;
             }
 
+            DisposablesTracker.UnregisterGodotObject(_weakReferenceToSelf);
+
             _disposed = true;
         }
 
-        public override unsafe string ToString()
+        public override string ToString()
         {
-            using godot_string str = default;
-            NativeFuncs.godotsharp_object_to_string(GetPtr(this), &str);
-            return Marshaling.mono_string_from_godot(str);
+            NativeFuncs.godotsharp_object_to_string(GetPtr(this), out godot_string str);
+            using (str)
+                return Marshaling.ConvertStringToManaged(str);
         }
 
         /// <summary>
@@ -164,128 +197,30 @@ namespace Godot
 
         internal static bool InternalIsClassNativeBase(Type t)
         {
-            var assemblyName = t.Assembly.GetName();
-            return assemblyName.Name == "GodotSharp" || assemblyName.Name == "GodotSharpEditor";
+            // Check whether the type is declared in the GodotSharp or GodotSharpEditor assemblies
+            var typeAssembly = t.Assembly;
+
+            if (typeAssembly == CachedType.Assembly)
+                return true;
+
+            var typeAssemblyName = t.Assembly.GetName();
+            return typeAssemblyName.Name == "GodotSharpEditor";
         }
 
-        internal unsafe bool InternalGodotScriptCallViaReflection(string method, godot_variant** args, int argCount,
-            out godot_variant ret)
+        // ReSharper disable once VirtualMemberNeverOverridden.Global
+        protected internal virtual bool SetGodotClassPropertyValue(in godot_string_name name, in godot_variant value)
         {
-            // Performance is not critical here as this will be replaced with source generators.
-            Type top = GetType();
-            Type native = InternalGetClassNativeBase(top);
-
-            while (top != null && top != native)
-            {
-                var methodInfo = top.GetMethod(method,
-                    BindingFlags.DeclaredOnly | BindingFlags.Instance |
-                    BindingFlags.NonPublic | BindingFlags.Public);
-
-                if (methodInfo != null)
-                {
-                    var parameters = methodInfo.GetParameters();
-                    int paramCount = parameters.Length;
-
-                    if (argCount == paramCount)
-                    {
-                        object[] invokeParams = new object[paramCount];
-
-                        for (int i = 0; i < paramCount; i++)
-                        {
-                            invokeParams[i] = Marshaling.variant_to_mono_object_of_type(
-                                args[i], parameters[i].ParameterType);
-                        }
-
-                        object retObj = methodInfo.Invoke(this, invokeParams);
-
-                        ret = Marshaling.mono_object_to_variant(retObj);
-                        return true;
-                    }
-                }
-
-                top = top.BaseType;
-            }
-
-            ret = default;
             return false;
         }
 
-        internal unsafe bool InternalGodotScriptSetFieldOrPropViaReflection(string name, godot_variant* value)
+        // ReSharper disable once VirtualMemberNeverOverridden.Global
+        protected internal virtual bool GetGodotClassPropertyValue(in godot_string_name name, out godot_variant value)
         {
-            // Performance is not critical here as this will be replaced with source generators.
-            Type top = GetType();
-            Type native = InternalGetClassNativeBase(top);
-
-            while (top != null && top != native)
-            {
-                var fieldInfo = top.GetField(name,
-                    BindingFlags.DeclaredOnly | BindingFlags.Instance |
-                    BindingFlags.NonPublic | BindingFlags.Public);
-
-                if (fieldInfo != null)
-                {
-                    object valueManaged = Marshaling.variant_to_mono_object_of_type(value, fieldInfo.FieldType);
-                    fieldInfo.SetValue(this, valueManaged);
-
-                    return true;
-                }
-
-                var propertyInfo = top.GetProperty(name,
-                    BindingFlags.DeclaredOnly | BindingFlags.Instance |
-                    BindingFlags.NonPublic | BindingFlags.Public);
-
-                if (propertyInfo != null)
-                {
-                    object valueManaged = Marshaling.variant_to_mono_object_of_type(value, propertyInfo.PropertyType);
-                    propertyInfo.SetValue(this, valueManaged);
-
-                    return true;
-                }
-
-                top = top.BaseType;
-            }
-
-            return false;
-        }
-
-        internal bool InternalGodotScriptGetFieldOrPropViaReflection(string name, out godot_variant value)
-        {
-            // Performance is not critical here as this will be replaced with source generators.
-            Type top = GetType();
-            Type native = InternalGetClassNativeBase(top);
-
-            while (top != null && top != native)
-            {
-                var fieldInfo = top.GetField(name,
-                    BindingFlags.DeclaredOnly | BindingFlags.Instance |
-                    BindingFlags.NonPublic | BindingFlags.Public);
-
-                if (fieldInfo != null)
-                {
-                    object valueManaged = fieldInfo.GetValue(this);
-                    value = Marshaling.mono_object_to_variant(valueManaged);
-                    return true;
-                }
-
-                var propertyInfo = top.GetProperty(name,
-                    BindingFlags.DeclaredOnly | BindingFlags.Instance |
-                    BindingFlags.NonPublic | BindingFlags.Public);
-
-                if (propertyInfo != null)
-                {
-                    object valueManaged = propertyInfo.GetValue(this);
-                    value = Marshaling.mono_object_to_variant(valueManaged);
-                    return true;
-                }
-
-                top = top.BaseType;
-            }
-
             value = default;
             return false;
         }
 
-        internal unsafe void InternalRaiseEventSignal(godot_string_name* eventSignalName, godot_variant** args,
+        internal void InternalRaiseEventSignal(in godot_string_name eventSignalName, NativeVariantPtrArgs args,
             int argc)
         {
             // Performance is not critical here as this will be replaced with source generators.
@@ -339,9 +274,9 @@ namespace Godot
 
                     var managedArgs = new object[argc];
 
-                    for (uint i = 0; i < argc; i++)
+                    for (int i = 0; i < argc; i++)
                     {
-                        managedArgs[i] = Marshaling.variant_to_mono_object_of_type(
+                        managedArgs[i] = Marshaling.ConvertVariantToManagedObjectOfType(
                             args[i], parameterInfos[i].ParameterType);
                     }
 
@@ -353,13 +288,11 @@ namespace Godot
             }
         }
 
-        internal static unsafe IntPtr ClassDB_get_method(StringName type, string method)
+        internal static IntPtr ClassDB_get_method(StringName type, StringName method)
         {
-            IntPtr methodBind;
-            fixed (char* methodChars = method)
-            {
-                methodBind = NativeFuncs.godotsharp_method_bind_get_method(ref type.NativeValue, methodChars);
-            }
+            var typeSelf = (godot_string_name)type.NativeValue;
+            var methodSelf = (godot_string_name)method.NativeValue;
+            IntPtr methodBind = NativeFuncs.godotsharp_method_bind_get_method(typeSelf, methodSelf);
 
             if (methodBind == IntPtr.Zero)
                 throw new NativeMethodBindNotFoundException(type + "." + method);
@@ -370,7 +303,8 @@ namespace Godot
         internal static unsafe delegate* unmanaged<IntPtr> ClassDB_get_constructor(StringName type)
         {
             // for some reason the '??' operator doesn't support 'delegate*'
-            var nativeConstructor = NativeFuncs.godotsharp_get_class_constructor(ref type.NativeValue);
+            var typeSelf = (godot_string_name)type.NativeValue;
+            var nativeConstructor = NativeFuncs.godotsharp_get_class_constructor(typeSelf);
 
             if (nativeConstructor == null)
                 throw new NativeConstructorNotFoundException(type);

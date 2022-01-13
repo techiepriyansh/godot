@@ -64,8 +64,8 @@ static_assert(sizeof(SafeRefCount) == sizeof(uint32_t));
 
 typedef Object *(*godotsharp_class_creation_func)();
 
-GD_PINVOKE_EXPORT MethodBind *godotsharp_method_bind_get_method(const StringName *p_classname, const char16_t *p_methodname) {
-	return ClassDB::get_method(*p_classname, StringName(String::utf16(p_methodname)));
+GD_PINVOKE_EXPORT MethodBind *godotsharp_method_bind_get_method(const StringName *p_classname, const StringName *p_methodname) {
+	return ClassDB::get_method(*p_classname, *p_methodname);
 }
 
 GD_PINVOKE_EXPORT godotsharp_class_creation_func godotsharp_get_class_constructor(const StringName *p_classname) {
@@ -104,6 +104,7 @@ GD_PINVOKE_EXPORT void godotsharp_internal_object_disposed(Object *p_ptr) {
 			MonoGCHandleData &gchandle = script_binding.gchandle;
 			if (!gchandle.is_released()) {
 				CSharpLanguage::release_script_gchandle(nullptr, gchandle);
+				script_binding.inited = false;
 			}
 		}
 	}
@@ -151,6 +152,7 @@ GD_PINVOKE_EXPORT void godotsharp_internal_refcounted_disposed(Object *p_ptr, bo
 				MonoGCHandleData &gchandle = script_binding.gchandle;
 				if (!gchandle.is_released()) {
 					CSharpLanguage::release_script_gchandle(nullptr, gchandle);
+					script_binding.inited = false;
 				}
 			}
 		}

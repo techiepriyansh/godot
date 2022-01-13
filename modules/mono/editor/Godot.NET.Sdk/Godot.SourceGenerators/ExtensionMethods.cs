@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
@@ -12,6 +13,16 @@ namespace Godot.SourceGenerators
             this GeneratorExecutionContext context, string property, out string? value
         ) => context.AnalyzerConfigOptions.GlobalOptions
             .TryGetValue("build_property." + property, out value);
+
+        public static bool AreGodotSourceGeneratorsDisabled(this GeneratorExecutionContext context)
+            => context.TryGetGlobalAnalyzerProperty("GodotSourceGenerators", out string? toggle) &&
+               toggle != null &&
+               toggle.Equals("disabled", StringComparison.OrdinalIgnoreCase);
+
+        public static bool IsGodotToolsProject(this GeneratorExecutionContext context)
+            => context.TryGetGlobalAnalyzerProperty("IsGodotToolsProject", out string? toggle) &&
+               toggle != null &&
+               toggle.Equals("true", StringComparison.OrdinalIgnoreCase);
 
         private static bool InheritsFrom(this INamedTypeSymbol? symbol, string baseName)
         {
@@ -69,18 +80,53 @@ namespace Godot.SourceGenerators
             }
         }
 
-        public static bool IsPartial(this ClassDeclarationSyntax cds)
+        public static bool IsNested(this TypeDeclarationSyntax cds)
+            => cds.Parent is TypeDeclarationSyntax;
+
+        public static bool IsPartial(this TypeDeclarationSyntax cds)
             => cds.Modifiers.Any(SyntaxKind.PartialKeyword);
 
-        public static bool HasDisableGeneratorsAttribute(this INamedTypeSymbol symbol)
-            => symbol.GetAttributes().Any(attr =>
-                attr.AttributeClass?.ToString() == GodotClasses.DisableGodotGeneratorsAttr);
+        public static bool AreAllOuterTypesPartial(
+            this TypeDeclarationSyntax cds,
+            out TypeDeclarationSyntax? typeMissingPartial
+        )
+        {
+            SyntaxNode? outerSyntaxNode = cds.Parent;
+
+            while (outerSyntaxNode is TypeDeclarationSyntax outerTypeDeclSyntax)
+            {
+                if (!outerTypeDeclSyntax.IsPartial())
+                {
+                    typeMissingPartial = outerTypeDeclSyntax;
+                    return false;
+                }
+
+                outerSyntaxNode = outerSyntaxNode.Parent;
+            }
+
+            typeMissingPartial = null;
+            return true;
+        }
+
+        public static string GetDeclarationKeyword(this INamedTypeSymbol namedTypeSymbol)
+        {
+            string? keyword = namedTypeSymbol.DeclaringSyntaxReferences
+                .OfType<TypeDeclarationSyntax>().FirstOrDefault()?
+                .Keyword.Text;
+
+            return keyword ?? namedTypeSymbol.TypeKind switch
+            {
+                TypeKind.Interface => "interface",
+                TypeKind.Struct => "struct",
+                _ => "class"
+            };
+        }
 
         private static SymbolDisplayFormat FullyQualifiedFormatOmitGlobal { get; } =
             SymbolDisplayFormat.FullyQualifiedFormat
                 .WithGlobalNamespaceStyle(SymbolDisplayGlobalNamespaceStyle.Omitted);
 
-        public static string FullQualifiedName(this INamedTypeSymbol symbol)
+        public static string FullQualifiedName(this ITypeSymbol symbol)
             => symbol.ToDisplayString(NullableFlowState.NotNull, FullyQualifiedFormatOmitGlobal);
 
         public static string FullQualifiedName(this INamespaceSymbol namespaceSymbol)

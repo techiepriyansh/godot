@@ -75,15 +75,22 @@ StringBuilder &operator<<(StringBuilder &r_sb, const char *p_cstring) {
 #define CLOSE_BLOCK_L3 INDENT3 CLOSE_BLOCK
 #define CLOSE_BLOCK_L4 INDENT4 CLOSE_BLOCK
 
+#define BINDINGS_GLOBAL_SCOPE_CLASS "GD"
+#define BINDINGS_NATIVE_NAME_FIELD "NativeName"
+
 #define CS_PARAM_MEMORYOWN "memoryOwn"
 #define CS_PARAM_METHODBIND "method"
 #define CS_PARAM_INSTANCE "ptr"
 #define CS_STATIC_METHOD_GETINSTANCE "GetPtr"
 #define CS_METHOD_CALL "Call"
 #define CS_PROPERTY_SINGLETON "Singleton"
+#define CS_METHOD_INVOKE_GODOT_CLASS_METHOD "InvokeGodotClassMethod"
+#define CS_METHOD_HAS_GODOT_CLASS_METHOD "HasGodotClassMethod"
 
 #define CS_STATIC_FIELD_NATIVE_CTOR "NativeCtor"
 #define CS_STATIC_FIELD_METHOD_BIND_PREFIX "MethodBind"
+#define CS_STATIC_FIELD_METHOD_NAME_PREFIX "MethodName_"
+#define CS_STATIC_FIELD_METHOD_PROXY_NAME_PREFIX "MethodProxyName_"
 #define CS_STATIC_FIELD_SIGNAL_NAME_PREFIX "SignalName_"
 
 #define ICALL_PREFIX "godot_icall_"
@@ -96,29 +103,27 @@ StringBuilder &operator<<(StringBuilder &r_sb, const char *p_cstring) {
 
 #define C_CLASS_NATIVE_FUNCS "NativeFuncs"
 #define C_NS_MONOUTILS "InteropUtils"
-#define C_METHOD_TIE_MANAGED_TO_UNMANAGED C_NS_MONOUTILS ".TieManagedToUnmanaged"
 #define C_METHOD_UNMANAGED_GET_MANAGED C_NS_MONOUTILS ".UnmanagedGetManaged"
 #define C_METHOD_ENGINE_GET_SINGLETON C_NS_MONOUTILS ".EngineGetSingleton"
 
 #define C_NS_MONOMARSHAL "Marshaling"
-#define C_METHOD_MANAGED_TO_VARIANT C_NS_MONOMARSHAL ".mono_object_to_variant"
-#define C_METHOD_MANAGED_FROM_VARIANT C_NS_MONOMARSHAL ".variant_to_mono_object"
-#define C_METHOD_MONOSTR_TO_GODOT C_NS_MONOMARSHAL ".mono_string_to_godot"
-#define C_METHOD_MONOSTR_FROM_GODOT C_NS_MONOMARSHAL ".mono_string_from_godot"
-#define C_METHOD_MONOARRAY_TO(m_type) C_NS_MONOMARSHAL ".mono_array_to_" #m_type
-#define C_METHOD_MONOARRAY_FROM(m_type) C_NS_MONOMARSHAL "." #m_type "_to_mono_array"
+#define C_METHOD_MANAGED_TO_VARIANT C_NS_MONOMARSHAL ".ConvertManagedObjectToVariant"
+#define C_METHOD_MANAGED_FROM_VARIANT C_NS_MONOMARSHAL ".ConvertVariantToManagedObject"
+#define C_METHOD_MONOSTR_TO_GODOT C_NS_MONOMARSHAL ".ConvertStringToNative"
+#define C_METHOD_MONOSTR_FROM_GODOT C_NS_MONOMARSHAL ".ConvertStringToManaged"
+#define C_METHOD_MONOARRAY_TO(m_type) C_NS_MONOMARSHAL ".ConvertSystemArrayToNative" #m_type
+#define C_METHOD_MONOARRAY_FROM(m_type) C_NS_MONOMARSHAL ".ConvertNative" #m_type "ToSystemArray"
 #define C_METHOD_MANAGED_TO_CALLABLE C_NS_MONOMARSHAL ".ConvertCallableToNative"
 #define C_METHOD_MANAGED_FROM_CALLABLE C_NS_MONOMARSHAL ".ConvertCallableToManaged"
 #define C_METHOD_MANAGED_TO_SIGNAL C_NS_MONOMARSHAL ".ConvertSignalToNative"
 #define C_METHOD_MANAGED_FROM_SIGNAL C_NS_MONOMARSHAL ".ConvertSignalToManaged"
 
-typedef String string;
 void BindingsGenerator::TypeInterface::postsetup_enum_type(BindingsGenerator::TypeInterface &r_enum_itype) {
 	// C interface for enums is the same as that of 'uint32_t'. Remember to apply
 	// any of the changes done here to the 'uint32_t' type interface as well.
 
 	r_enum_itype.cs_type = r_enum_itype.proxy_name;
-	r_enum_itype.cs_in = "(int)%s";
+	r_enum_itype.cs_in_expr = "(int)%0";
 	r_enum_itype.cs_out = "%5return (%2)%0(%1);";
 
 	{
@@ -544,23 +549,23 @@ String BindingsGenerator::bbcode_to_xml(const String &p_bbcode, const TypeInterf
 				xml_output.append(tag);
 				xml_output.append("</c>");
 			} else if (tag == "PackedByteArray") {
-				xml_output.append("<see cref=\"T:byte[]\"/>");
+				xml_output.append("<see cref=\"byte\"/>[]");
 			} else if (tag == "PackedInt32Array") {
-				xml_output.append("<see cref=\"T:int[]\"/>");
+				xml_output.append("<see cref=\"int\"/>[]");
 			} else if (tag == "PackedInt64Array") {
-				xml_output.append("<see cref=\"T:long[]\"/>");
+				xml_output.append("<see cref=\"long\"/>[]");
 			} else if (tag == "PackedFloat32Array") {
-				xml_output.append("<see cref=\"T:float[]\"/>");
+				xml_output.append("<see cref=\"float\"/>[]");
 			} else if (tag == "PackedFloat64Array") {
-				xml_output.append("<see cref=\"T:double[]\"/>");
+				xml_output.append("<see cref=\"double\"/>[]");
 			} else if (tag == "PackedStringArray") {
-				xml_output.append("<see cref=\"T:string[]\"/>");
+				xml_output.append("<see cref=\"string\"/>[]");
 			} else if (tag == "PackedVector2Array") {
-				xml_output.append("<see cref=\"T:" BINDINGS_NAMESPACE ".Vector2[]\"/>");
+				xml_output.append("<see cref=\"" BINDINGS_NAMESPACE ".Vector2\"/>[]");
 			} else if (tag == "PackedVector3Array") {
-				xml_output.append("<see cref=\"T:" BINDINGS_NAMESPACE ".Vector3[]\"/>");
+				xml_output.append("<see cref=\"" BINDINGS_NAMESPACE ".Vector3\"/>[]");
 			} else if (tag == "PackedColorArray") {
-				xml_output.append("<see cref=\"T:" BINDINGS_NAMESPACE ".Color[]\"/>");
+				xml_output.append("<see cref=\"" BINDINGS_NAMESPACE ".Color\"/>[]");
 			} else {
 				const TypeInterface *target_itype = _get_type_or_null(TypeReference(tag));
 
@@ -1282,6 +1287,8 @@ Error BindingsGenerator::_generate_cs_type(const TypeInterface &itype, const Str
 				  "#pragma warning disable CS1573 // Disable warning: "
 				  "'Parameter has no matching param tag in the XML comment'\n");
 
+	output.append("\n#nullable disable\n");
+
 	output.append("\nnamespace " BINDINGS_NAMESPACE "\n" OPEN_BLOCK);
 
 	const DocData::ClassDoc *class_doc = itype.class_doc;
@@ -1315,20 +1322,17 @@ Error BindingsGenerator::_generate_cs_type(const TypeInterface &itype, const Str
 	}
 	output.append(itype.proxy_name);
 
-	if (itype.is_singleton) {
-		output.append("\n");
-	} else if (is_derived_type) {
+	if (is_derived_type && !itype.is_singleton) {
 		if (obj_types.has(itype.base_name)) {
 			output.append(" : ");
 			output.append(obj_types[itype.base_name].proxy_name);
-			output.append("\n");
 		} else {
 			ERR_PRINT("Base type '" + itype.base_name.operator String() + "' does not exist, for class '" + itype.name + "'.");
 			return ERR_INVALID_DATA;
 		}
 	}
 
-	output.append(INDENT1 "{");
+	output.append("\n" INDENT1 "{");
 
 	// Add constants
 
@@ -1432,7 +1436,7 @@ Error BindingsGenerator::_generate_cs_type(const TypeInterface &itype, const Str
 		// Add native name static field
 
 		if (is_derived_type) {
-			output << MEMBER_BEGIN "private static readonly System.Type _cachedType = typeof(" << itype.proxy_name << ");\n";
+			output << MEMBER_BEGIN "private static readonly System.Type CachedType = typeof(" << itype.proxy_name << ");\n";
 		}
 
 		output.append(MEMBER_BEGIN "private static readonly StringName " BINDINGS_NATIVE_NAME_FIELD " = \"");
@@ -1443,7 +1447,7 @@ Error BindingsGenerator::_generate_cs_type(const TypeInterface &itype, const Str
 			// Add native constructor static field
 
 			output << MEMBER_BEGIN << "[DebuggerBrowsable(DebuggerBrowsableState.Never)]\n"
-				   << INDENT2 "private static unsafe readonly delegate* unmanaged<IntPtr> "
+				   << INDENT2 "private static readonly unsafe delegate* unmanaged<IntPtr> "
 				   << CS_STATIC_FIELD_NATIVE_CTOR " = " ICALL_CLASSDB_GET_CONSTRUCTOR
 				   << "(" BINDINGS_NATIVE_NAME_FIELD ");\n";
 		}
@@ -1452,22 +1456,12 @@ Error BindingsGenerator::_generate_cs_type(const TypeInterface &itype, const Str
 			// Add default constructor
 			if (itype.is_instantiable) {
 				output << MEMBER_BEGIN "public " << itype.proxy_name << "() : this("
-					   << (itype.memory_own ? "true" : "false") << ")\n" OPEN_BLOCK_L2;
-
-				// The default constructor may also be called by the engine when instancing existing native objects
-				// The engine will initialize the pointer field of the managed side before calling the constructor
-				// This is why we only allocate a new native object from the constructor if the pointer field is not set
-				output << INDENT3 "if (" BINDINGS_PTR_FIELD " == IntPtr.Zero)\n" OPEN_BLOCK_L3
-					   << INDENT4 "unsafe\n" INDENT4 OPEN_BLOCK
-					   << INDENT5 BINDINGS_PTR_FIELD " = " CS_STATIC_FIELD_NATIVE_CTOR "();\n"
-					   << CLOSE_BLOCK_L4
-					   << INDENT4 C_METHOD_TIE_MANAGED_TO_UNMANAGED "(this, " BINDINGS_PTR_FIELD ", "
-					   << BINDINGS_NATIVE_NAME_FIELD << ", refCounted: " << (itype.is_ref_counted ? "true" : "false")
-					   << ", ((object)this).GetType(), _cachedType);\n" CLOSE_BLOCK_L3
-					   << INDENT3 "else\n" INDENT3 OPEN_BLOCK
-					   << INDENT4 "InteropUtils.TieManagedToUnmanagedWithPreSetup(this, "
-					   << BINDINGS_PTR_FIELD ");\n" CLOSE_BLOCK_L3
-					   << INDENT3 "_InitializeGodotScriptInstanceInternals();\n" CLOSE_BLOCK_L2;
+					   << (itype.memory_own ? "true" : "false") << ")\n" OPEN_BLOCK_L2
+					   << INDENT3 "unsafe\n" INDENT3 OPEN_BLOCK
+					   << INDENT4 "_ConstructAndInitialize(" CS_STATIC_FIELD_NATIVE_CTOR ", "
+					   << BINDINGS_NATIVE_NAME_FIELD ", CachedType, refCounted: "
+					   << (itype.is_ref_counted ? "true" : "false") << ");\n"
+					   << CLOSE_BLOCK_L3 CLOSE_BLOCK_L2;
 			} else {
 				// Hide the constructor
 				output.append(MEMBER_BEGIN "internal ");
@@ -1499,14 +1493,36 @@ Error BindingsGenerator::_generate_cs_type(const TypeInterface &itype, const Str
 				"Failed to generate signal '" + isignal.name + "' for class '" + itype.name + "'.");
 	}
 
-	// Script calls
+	// Script members look-up
 
 	if (!itype.is_singleton && (is_derived_type || itype.has_virtual_methods)) {
-		// TODO: string is ok for now. But should be replaced with StringName in the future for performance.
+		// Generate method names cache fields
 
-		output << MEMBER_BEGIN "internal " << (is_derived_type ? "override" : "virtual")
-			   << " unsafe bool InternalGodotScriptCall(string method, godot_variant** args, "
-			   << "int argCount, out godot_variant ret)\n"
+		for (const MethodInterface &imethod : itype.methods) {
+			if (!imethod.is_virtual) {
+				continue;
+			}
+
+			output << MEMBER_BEGIN "// ReSharper disable once InconsistentNaming\n"
+				   << INDENT2 "[DebuggerBrowsable(DebuggerBrowsableState.Never)]\n"
+				   << INDENT2 "private static readonly StringName "
+				   << CS_STATIC_FIELD_METHOD_NAME_PREFIX << imethod.name
+				   << " = \"" << imethod.name << "\";\n";
+
+			output << MEMBER_BEGIN "// ReSharper disable once InconsistentNaming\n"
+				   << INDENT2 "[DebuggerBrowsable(DebuggerBrowsableState.Never)]\n"
+				   << INDENT2 "private static readonly StringName "
+				   << CS_STATIC_FIELD_METHOD_PROXY_NAME_PREFIX << imethod.name
+				   << " = \"" << imethod.proxy_name << "\";\n";
+		}
+
+		// TODO: Only generate HasGodotClassMethod and InvokeGodotClassMethod if there's any method
+
+		// Generate InvokeGodotClassMethod
+
+		output << MEMBER_BEGIN "protected internal " << (is_derived_type ? "override" : "virtual")
+			   << " bool " CS_METHOD_INVOKE_GODOT_CLASS_METHOD "(in godot_string_name method, "
+			   << "NativeVariantPtrArgs args, int argCount, out godot_variant ret)\n"
 			   << INDENT2 "{\n";
 
 		for (const MethodInterface &imethod : itype.methods) {
@@ -1514,11 +1530,10 @@ Error BindingsGenerator::_generate_cs_type(const TypeInterface &itype, const Str
 				continue;
 			}
 
-			// TODO:
-			//  Compare with cached StringName. We already have a cached StringName
-			//  field for the proxy name. We need one for the original snake_case name.
-			output << INDENT3 "if ((method == nameof(" << imethod.proxy_name << ") || method == \"" << imethod.name
-				   << "\") && argCount == " << itos(imethod.arguments.size()) << ")\n"
+			// We check both native names (snake_case) and proxy names (PascalCase)
+			output << INDENT3 "if ((method == " << CS_STATIC_FIELD_METHOD_PROXY_NAME_PREFIX << imethod.name
+				   << " || method == " << CS_STATIC_FIELD_METHOD_NAME_PREFIX << imethod.name
+				   << ") && argCount == " << itos(imethod.arguments.size()) << ")\n"
 				   << INDENT3 "{\n";
 
 			if (imethod.return_type.cname != name_cache.type_void) {
@@ -1540,7 +1555,7 @@ Error BindingsGenerator::_generate_cs_type(const TypeInterface &itype, const Str
 				}
 
 				// TODO: static marshaling (no reflection, no runtime type checks)
-				output << "(" << arg_type->cs_type << ")Marshaling.variant_to_mono_object_of_type(args["
+				output << "(" << arg_type->cs_type << ")Marshaling.ConvertVariantToManagedObjectOfType(args["
 					   << itos(i) << "], typeof(" << arg_type->cs_type << "))";
 			}
 
@@ -1548,7 +1563,7 @@ Error BindingsGenerator::_generate_cs_type(const TypeInterface &itype, const Str
 
 			if (imethod.return_type.cname != name_cache.type_void) {
 				// TODO: static marshaling (no reflection, no runtime type checks)
-				output << INDENT4 "ret = Marshaling.mono_object_to_variant(retBoxed);\n";
+				output << INDENT4 "ret = Marshaling.ConvertManagedObjectToVariant(retBoxed);\n";
 				output << INDENT4 "return true;\n";
 			} else {
 				output << INDENT4 "ret = default;\n";
@@ -1559,9 +1574,42 @@ Error BindingsGenerator::_generate_cs_type(const TypeInterface &itype, const Str
 		}
 
 		if (is_derived_type) {
-			output << INDENT3 "return base.InternalGodotScriptCall(method, args, argCount, out ret);\n";
+			output << INDENT3 "return base." CS_METHOD_INVOKE_GODOT_CLASS_METHOD "(method, args, argCount, out ret);\n";
 		} else {
-			output << INDENT3 "return InternalGodotScriptCallViaReflection(method, args, argCount, out ret);\n";
+			output << INDENT3 "ret = default;\n"
+				   << INDENT3 "return false;\n";
+		}
+
+		output << INDENT2 "}\n";
+
+		// Generate HasGodotClassMethod
+
+		output << MEMBER_BEGIN "protected internal " << (is_derived_type ? "override" : "virtual")
+			   << " bool " CS_METHOD_HAS_GODOT_CLASS_METHOD "(in godot_string_name method)\n"
+			   << INDENT2 "{\n";
+
+		for (const MethodInterface &imethod : itype.methods) {
+			if (!imethod.is_virtual) {
+				continue;
+			}
+
+			// We check for native names (snake_case). If we detect one, we call HasGodotClassMethod
+			// again, but this time with the respective proxy name (PascalCase). It's the job of
+			// user derived classes to override the method and check for those. Our C# source
+			// generators take care of generating those override methods.
+			output << INDENT3 "if (method == " << CS_STATIC_FIELD_METHOD_NAME_PREFIX << imethod.name
+				   << ")\n" INDENT3 "{\n"
+				   << INDENT4 "if (" CS_METHOD_HAS_GODOT_CLASS_METHOD "("
+				   << CS_STATIC_FIELD_METHOD_PROXY_NAME_PREFIX << imethod.name
+				   << ".NativeValue.DangerousSelfRef))\n" INDENT4 "{\n"
+				   << INDENT5 "return true;\n"
+				   << INDENT4 "}\n" INDENT3 "}\n";
+		}
+
+		if (is_derived_type) {
+			output << INDENT3 "return base." CS_METHOD_HAS_GODOT_CLASS_METHOD "(method);\n";
+		} else {
+			output << INDENT3 "return false;\n";
 		}
 
 		output << INDENT2 "}\n";
@@ -1746,10 +1794,16 @@ Error BindingsGenerator::_generate_cs_method(const BindingsGenerator::TypeInterf
 
 	String arguments_sig;
 	StringBuilder cs_in_statements;
-	bool cs_in_is_unsafe = false;
+	bool cs_in_expr_is_unsafe = false;
 
 	String icall_params = method_bind_field + ", ";
-	icall_params += sformat(p_itype.cs_in, "this");
+
+	if (p_itype.cs_in.size()) {
+		cs_in_statements << sformat(p_itype.cs_in, p_itype.c_type, "this",
+				String(), String(), String(), INDENT3);
+	}
+
+	icall_params += sformat(p_itype.cs_in_expr, "this");
 
 	StringBuilder default_args_doc;
 
@@ -1808,10 +1862,10 @@ Error BindingsGenerator::_generate_cs_method(const BindingsGenerator::TypeInterf
 		if (iarg.default_argument.size() && iarg.def_param_mode != ArgumentInterface::CONSTANT) {
 			// The default value of an argument must be constant. Otherwise we make it Nullable and do the following:
 			// Type arg_in = arg.HasValue ? arg.Value : <non-const default value>;
-			String arg_in = iarg.name;
-			arg_in += "_in";
+			String arg_or_defval_local = iarg.name;
+			arg_or_defval_local += "OrDefVal";
 
-			cs_in_statements << INDENT3 << arg_type->cs_type << " " << arg_in << " = " << iarg.name;
+			cs_in_statements << INDENT3 << arg_type->cs_type << " " << arg_or_defval_local << " = " << iarg.name;
 
 			if (iarg.def_param_mode == ArgumentInterface::NULLABLE_VAL) {
 				cs_in_statements << ".HasValue ? ";
@@ -1836,7 +1890,16 @@ Error BindingsGenerator::_generate_cs_method(const BindingsGenerator::TypeInterf
 
 			cs_in_statements << def_arg << ";\n";
 
-			icall_params += arg_type->cs_in.is_empty() ? arg_in : sformat(arg_type->cs_in, arg_in);
+			if (arg_type->cs_in.size()) {
+				cs_in_statements << sformat(arg_type->cs_in, arg_type->c_type, arg_or_defval_local,
+						String(), String(), String(), INDENT3);
+			}
+
+			if (arg_type->cs_in_expr.is_empty()) {
+				icall_params += arg_or_defval_local;
+			} else {
+				icall_params += sformat(arg_type->cs_in_expr, arg_or_defval_local, arg_type->c_type);
+			}
 
 			// Apparently the name attribute must not include the @
 			String param_tag_name = iarg.name.begins_with("@") ? iarg.name.substr(1, iarg.name.length()) : iarg.name;
@@ -1845,17 +1908,22 @@ Error BindingsGenerator::_generate_cs_method(const BindingsGenerator::TypeInterf
 
 			default_args_doc.append(MEMBER_BEGIN "/// <param name=\"" + param_tag_name + "\">If the parameter is null, then the default value is " + param_def_arg + "</param>");
 		} else {
-			icall_params += arg_type->cs_in.is_empty() ? iarg.name : sformat(arg_type->cs_in, iarg.name);
+			if (arg_type->cs_in.size()) {
+				cs_in_statements << sformat(arg_type->cs_in, arg_type->c_type, iarg.name,
+						String(), String(), String(), INDENT3);
+			}
+
+			icall_params += arg_type->cs_in_expr.is_empty() ? iarg.name : sformat(arg_type->cs_in_expr, iarg.name, arg_type->c_type);
 		}
 
-		cs_in_is_unsafe |= arg_type->cs_in_is_unsafe;
+		cs_in_expr_is_unsafe |= arg_type->cs_in_expr_is_unsafe;
 	}
 
 	// Generate method
 	{
 		if (!p_imethod.is_virtual && !p_imethod.requires_object_call) {
-			p_output << MEMBER_BEGIN "[DebuggerBrowsable(DebuggerBrowsableState.Never)]" MEMBER_BEGIN "private static readonly IntPtr "
-					 << method_bind_field << " = ";
+			p_output << MEMBER_BEGIN "[DebuggerBrowsable(DebuggerBrowsableState.Never)]\n"
+					 << INDENT2 "private static readonly IntPtr " << method_bind_field << " = ";
 
 			if (p_itype.is_singleton) {
 				// Singletons are static classes. They don't derive Godot.Object,
@@ -1889,16 +1957,6 @@ Error BindingsGenerator::_generate_cs_method(const BindingsGenerator::TypeInterf
 			p_output.append(default_args_doc.as_string());
 		}
 
-		if (!p_imethod.is_internal) {
-			// TODO: This alone adds ~0.2 MB of bloat to the core API assembly. It would be
-			// better to generate a table in the C++ glue instead. That way the strings wouldn't
-			// add that much extra bloat as they're already used in engine code. Also, it would
-			// probably be much faster than looking up the attributes when fetching methods.
-			p_output.append(MEMBER_BEGIN "[GodotMethod(\"");
-			p_output.append(p_imethod.name);
-			p_output.append("\")]");
-		}
-
 		if (p_imethod.is_deprecated) {
 			if (p_imethod.deprecation_message.is_empty()) {
 				WARN_PRINT("An empty deprecation message is discouraged. Method: '" + p_imethod.proxy_name + "'.");
@@ -1918,7 +1976,7 @@ Error BindingsGenerator::_generate_cs_method(const BindingsGenerator::TypeInterf
 			p_output.append("virtual ");
 		}
 
-		if (cs_in_is_unsafe) {
+		if (cs_in_expr_is_unsafe) {
 			p_output.append("unsafe ");
 		}
 
@@ -1964,7 +2022,7 @@ Error BindingsGenerator::_generate_cs_method(const BindingsGenerator::TypeInterf
 		im_call += ".";
 		im_call += im_icall->name;
 
-		if (p_imethod.arguments.size()) {
+		if (p_imethod.arguments.size() && cs_in_statements.get_string_length() > 0) {
 			p_output.append(cs_in_statements.as_string());
 		}
 
@@ -2059,8 +2117,9 @@ Error BindingsGenerator::_generate_cs_signal(const BindingsGenerator::TypeInterf
 		// If so, we could store the pointer we get from `data_unique_pointer()` instead of allocating StringName here.
 
 		// Cached signal name (StringName)
-		p_output.append(MEMBER_BEGIN "[DebuggerBrowsable(DebuggerBrowsableState.Never)]" MEMBER_BEGIN
-									 "private static readonly StringName " CS_STATIC_FIELD_SIGNAL_NAME_PREFIX);
+		p_output.append(MEMBER_BEGIN "// ReSharper disable once InconsistentNaming\n");
+		p_output.append(INDENT2 "[DebuggerBrowsable(DebuggerBrowsableState.Never)]" MEMBER_BEGIN
+								"private static readonly StringName " CS_STATIC_FIELD_SIGNAL_NAME_PREFIX);
 		p_output.append(p_isignal.name);
 		p_output.append(" = \"");
 		p_output.append(p_isignal.name);
@@ -2124,7 +2183,7 @@ Error BindingsGenerator::_generate_cs_native_calls(const InternalCall &p_icall, 
 
 		if (p_icall.is_vararg) {
 			if (i < p_icall.get_arguments_count() - 1) {
-				string c_in_vararg = arg_type->c_in_vararg;
+				String c_in_vararg = arg_type->c_in_vararg;
 
 				if (arg_type->is_object_type) {
 					c_in_vararg = "%5using godot_variant %1_in = VariantUtils.CreateFromGodotObject(%1);\n";
@@ -2193,8 +2252,6 @@ Error BindingsGenerator::_generate_cs_native_calls(const InternalCall &p_icall, 
 
 	auto generate_call_and_return_stmts = [&](const char *base_indent) {
 		if (p_icall.is_vararg) {
-			r_output << base_indent << "godot_variant_call_error vcall_error;\n";
-
 			// MethodBind Call
 			r_output << base_indent;
 
@@ -2215,7 +2272,7 @@ Error BindingsGenerator::_generate_cs_native_calls(const InternalCall &p_icall, 
 			r_output << C_CLASS_NATIVE_FUNCS ".godotsharp_method_bind_call("
 					 << CS_PARAM_METHODBIND ", " CS_PARAM_INSTANCE ", "
 					 << (p_icall.get_arguments_count() ? "(godot_variant**)" C_LOCAL_PTRCALL_ARGS : "null")
-					 << ", total_length, &vcall_error);\n";
+					 << ", total_length, out _);\n";
 
 			if (!ret_void) {
 				if (return_type->cname != name_cache.type_Variant) {
@@ -2254,9 +2311,9 @@ Error BindingsGenerator::_generate_cs_native_calls(const InternalCall &p_icall, 
 			r_output << INDENT3 "int vararg_length = " << vararg_arg << ".Length;\n"
 					 << INDENT3 "int total_length = " << real_argc_str << " + vararg_length;\n";
 
-			r_output << INDENT3 "Span<godot_variant> varargs_span = vararg_length <= 5 ?\n"
-					 << INDENT4 "stackalloc godot_variant[vararg_length].Cleared() :\n"
-					 << INDENT4 "new godot_variant[vararg_length];\n";
+			r_output << INDENT3 "Span<godot_variant.movable> varargs_span = vararg_length <= 5 ?\n"
+					 << INDENT4 "stackalloc godot_variant.movable[vararg_length].Cleared() :\n"
+					 << INDENT4 "new godot_variant.movable[vararg_length];\n";
 
 			r_output << INDENT3 "Span<IntPtr> " C_LOCAL_PTRCALL_ARGS "_span = total_length <= 10 ?\n"
 					 << INDENT4 "stackalloc IntPtr[total_length] :\n"
@@ -2264,7 +2321,7 @@ Error BindingsGenerator::_generate_cs_native_calls(const InternalCall &p_icall, 
 
 			r_output << INDENT3 "using var variantSpanDisposer = new VariantSpanDisposer(varargs_span);\n";
 
-			r_output << INDENT3 "fixed (godot_variant* varargs = &MemoryMarshal.GetReference(varargs_span))\n"
+			r_output << INDENT3 "fixed (godot_variant* varargs = &MemoryMarshal.GetReference(varargs_span).DangerousSelfRef)\n"
 					 << INDENT3 "fixed (IntPtr* " C_LOCAL_PTRCALL_ARGS " = "
 								"&MemoryMarshal.GetReference(" C_LOCAL_PTRCALL_ARGS "_span))\n"
 					 << OPEN_BLOCK_L3;
@@ -2505,14 +2562,14 @@ bool BindingsGenerator::_populate_object_type_interfaces() {
 
 		itype.c_out = "%5return ";
 		itype.c_out += C_METHOD_UNMANAGED_GET_MANAGED;
-		itype.c_out += itype.is_ref_counted ? "(%1._reference);\n" : "(%1);\n";
+		itype.c_out += itype.is_ref_counted ? "(%1.Reference);\n" : "(%1);\n";
 
 		itype.cs_type = itype.proxy_name;
 
 		if (itype.is_singleton) {
-			itype.cs_in = "Object." CS_STATIC_METHOD_GETINSTANCE "(" CS_PROPERTY_SINGLETON ")";
+			itype.cs_in_expr = "Object." CS_STATIC_METHOD_GETINSTANCE "(" CS_PROPERTY_SINGLETON ")";
 		} else {
-			itype.cs_in = "Object." CS_STATIC_METHOD_GETINSTANCE "(%0)";
+			itype.cs_in_expr = "Object." CS_STATIC_METHOD_GETINSTANCE "(%0)";
 		}
 
 		itype.cs_out = "%5return (%2)%0(%1);";
@@ -2943,8 +3000,13 @@ bool BindingsGenerator::_arg_default_value_from_variant(const Variant &p_val, Ar
 		case Variant::STRING_NAME:
 		case Variant::NODE_PATH:
 			if (r_iarg.type.cname == name_cache.type_StringName || r_iarg.type.cname == name_cache.type_NodePath) {
-				r_iarg.default_argument = "(%s)\"" + r_iarg.default_argument + "\"";
-				r_iarg.def_param_mode = ArgumentInterface::NULLABLE_REF;
+				if (r_iarg.default_argument.length() > 0) {
+					r_iarg.default_argument = "(%s)\"" + r_iarg.default_argument + "\"";
+					r_iarg.def_param_mode = ArgumentInterface::NULLABLE_REF;
+				} else {
+					// No need for a special `in` statement to change `null` to `""`. Marshaling takes care of this already.
+					r_iarg.default_argument = "null";
+				}
 			} else {
 				CRASH_COND(r_iarg.type.cname != name_cache.type_String);
 				r_iarg.default_argument = "\"" + r_iarg.default_argument + "\"";
@@ -2985,8 +3047,11 @@ bool BindingsGenerator::_arg_default_value_from_variant(const Variant &p_val, Ar
 			r_iarg.default_argument = "null";
 			break;
 		case Variant::DICTIONARY:
-			r_iarg.default_argument = "new %s()";
-			r_iarg.def_param_mode = ArgumentInterface::NULLABLE_REF;
+			ERR_FAIL_COND_V_MSG(!p_val.operator Dictionary().is_empty(), false,
+					"Default value of type 'Dictionary' must be an empty dictionary.");
+			// The [cs_in] expression already interprets null values as empty dictionaries.
+			r_iarg.default_argument = "null";
+			r_iarg.def_param_mode = ArgumentInterface::CONSTANT;
 			break;
 		case Variant::RID:
 			ERR_FAIL_COND_V_MSG(r_iarg.type.cname != name_cache.type_RID, false,
@@ -2998,8 +3063,11 @@ bool BindingsGenerator::_arg_default_value_from_variant(const Variant &p_val, Ar
 			r_iarg.default_argument = "default";
 			break;
 		case Variant::ARRAY:
-			r_iarg.default_argument = "new %s { }";
-			r_iarg.def_param_mode = ArgumentInterface::NULLABLE_REF;
+			ERR_FAIL_COND_V_MSG(!p_val.operator Array().is_empty(), false,
+					"Default value of type 'Array' must be an empty array.");
+			// The [cs_in] expression already interprets null values as empty arrays.
+			r_iarg.default_argument = "null";
+			r_iarg.def_param_mode = ArgumentInterface::CONSTANT;
 			break;
 		case Variant::PACKED_BYTE_ARRAY:
 		case Variant::PACKED_INT32_ARRAY:
@@ -3086,8 +3154,8 @@ void BindingsGenerator::_populate_builtin_type_interfaces() {
 		itype = TypeInterface::create_value_type(String(#m_type)); \
 		itype.c_type_in = #m_type "*";                             \
 		itype.c_type_out = itype.cs_type;                          \
-		itype.cs_in = "&%s";                                       \
-		itype.cs_in_is_unsafe = true;                              \
+		itype.cs_in_expr = "&%0";                                  \
+		itype.cs_in_expr_is_unsafe = true;                         \
 		builtin_types.insert(itype.cname, itype);                  \
 	}
 
@@ -3109,7 +3177,7 @@ void BindingsGenerator::_populate_builtin_type_interfaces() {
 
 	// bool
 	itype = TypeInterface::create_value_type(String("bool"));
-	itype.cs_in = "%s.ToGodotBool()";
+	itype.cs_in_expr = "%0.ToGodotBool()";
 	itype.cs_out = "%5return %0(%1).ToBool();";
 	itype.c_type = "godot_bool";
 	itype.c_type_in = itype.c_type;
@@ -3209,15 +3277,14 @@ void BindingsGenerator::_populate_builtin_type_interfaces() {
 	itype.cname = itype.name;
 	itype.proxy_name = "StringName";
 	itype.cs_type = itype.proxy_name;
-	itype.cs_in = "ref %0.NativeValue";
+	itype.cs_in_expr = "(%1)(%0?.NativeValue ?? default)";
 	// Cannot pass null StringName to ptrcall
-	itype.c_in = "%5using %0 %1_in = " C_CLASS_NATIVE_FUNCS ".godotsharp_string_name_new_copy(%1);\n";
 	itype.c_out = "%5return %0.CreateTakingOwnershipOfDisposableValue(%1);\n";
-	itype.c_arg_in = "&%s_in";
+	itype.c_arg_in = "&%s";
 	itype.c_type = "godot_string_name";
-	itype.c_type_in = "ref " + itype.c_type;
+	itype.c_type_in = itype.c_type;
 	itype.c_type_out = itype.cs_type;
-	itype.c_in_vararg = "%5using godot_variant %1_in = VariantUtils.CreateFromStringName(ref %1);\n";
+	itype.c_in_vararg = "%5using godot_variant %1_in = VariantUtils.CreateFromStringName(%1);\n";
 	builtin_types.insert(itype.cname, itype);
 
 	// NodePath
@@ -3226,13 +3293,12 @@ void BindingsGenerator::_populate_builtin_type_interfaces() {
 	itype.cname = itype.name;
 	itype.proxy_name = "NodePath";
 	itype.cs_type = itype.proxy_name;
-	itype.cs_in = "ref %0.NativeValue";
+	itype.cs_in_expr = "(%1)(%0?.NativeValue ?? default)";
 	// Cannot pass null NodePath to ptrcall
-	itype.c_in = "%5using %0 %1_in = " C_CLASS_NATIVE_FUNCS ".godotsharp_node_path_new_copy(%1);\n";
 	itype.c_out = "%5return %0.CreateTakingOwnershipOfDisposableValue(%1);\n";
-	itype.c_arg_in = "&%s_in";
+	itype.c_arg_in = "&%s";
 	itype.c_type = "godot_node_path";
-	itype.c_type_in = "ref " + itype.c_type;
+	itype.c_type_in = itype.c_type;
 	itype.c_type_out = itype.cs_type;
 	builtin_types.insert(itype.cname, itype);
 
@@ -3255,7 +3321,7 @@ void BindingsGenerator::_populate_builtin_type_interfaces() {
 	itype.proxy_name = "object";
 	itype.cs_type = itype.proxy_name;
 	itype.c_in = "%5using %0 %1_in = " C_METHOD_MANAGED_TO_VARIANT "(%1);\n";
-	itype.c_out = "%5return " C_METHOD_MANAGED_FROM_VARIANT "(&%1);\n";
+	itype.c_out = "%5return " C_METHOD_MANAGED_FROM_VARIANT "(%1);\n";
 	itype.c_arg_in = "&%s_in";
 	itype.c_type = "godot_variant";
 	itype.c_type_in = itype.cs_type;
@@ -3265,9 +3331,9 @@ void BindingsGenerator::_populate_builtin_type_interfaces() {
 
 	// Callable
 	itype = TypeInterface::create_value_type(String("Callable"));
-	itype.cs_in = "ref %s";
+	itype.cs_in_expr = "ref %0";
 	itype.c_in = "%5using %0 %1_in = " C_METHOD_MANAGED_TO_CALLABLE "(ref %1);\n";
-	itype.c_out = "%5return " C_METHOD_MANAGED_FROM_CALLABLE "(&%1);\n";
+	itype.c_out = "%5return " C_METHOD_MANAGED_FROM_CALLABLE "(in %1);\n";
 	itype.c_arg_in = "&%s_in";
 	itype.c_type = "godot_callable";
 	itype.c_type_in = "ref " + itype.cs_type;
@@ -3281,7 +3347,7 @@ void BindingsGenerator::_populate_builtin_type_interfaces() {
 	itype.cname = itype.name;
 	itype.proxy_name = "SignalInfo";
 	itype.cs_type = itype.proxy_name;
-	itype.cs_in = "ref %s";
+	itype.cs_in_expr = "ref %0";
 	itype.c_in = "%5using %0 %1_in = " C_METHOD_MANAGED_TO_SIGNAL "(ref %1);\n";
 	itype.c_out = "%5return " C_METHOD_MANAGED_FROM_SIGNAL "(&%1);\n";
 	itype.c_arg_in = "&%s_in";
@@ -3297,6 +3363,7 @@ void BindingsGenerator::_populate_builtin_type_interfaces() {
 	itype.cname = itype.name;
 	itype.proxy_name = "object[]";
 	itype.cs_type = "params object[]";
+	itype.cs_in_expr = "%0 ?? Array.Empty<object>()";
 	// c_type, c_in and c_arg_in are hard-coded in the generator.
 	// c_out and c_type_out are not applicable to VarArg.
 	itype.c_arg_in = "&%s_in";
@@ -3311,7 +3378,7 @@ void BindingsGenerator::_populate_builtin_type_interfaces() {
 		itype.proxy_name = #m_proxy_t "[]";                                         \
 		itype.cs_type = itype.proxy_name;                                           \
 		itype.c_in = "%5using %0 %1_in = " C_METHOD_MONOARRAY_TO(m_type) "(%1);\n"; \
-		itype.c_out = "%5return " C_METHOD_MONOARRAY_FROM(m_type) "(&%1);\n";       \
+		itype.c_out = "%5return " C_METHOD_MONOARRAY_FROM(m_type) "(%1);\n";        \
 		itype.c_arg_in = "&%s_in";                                                  \
 		itype.c_type = #m_managed_type;                                             \
 		itype.c_type_in = itype.proxy_name;                                         \
@@ -3343,12 +3410,11 @@ void BindingsGenerator::_populate_builtin_type_interfaces() {
 	itype.cname = itype.name;
 	itype.proxy_name = itype.name;
 	itype.cs_type = BINDINGS_NAMESPACE_COLLECTIONS "." + itype.proxy_name;
-	itype.cs_in = "ref %0.NativeValue";
-	itype.c_in = "%5using %0 %1_in = " C_CLASS_NATIVE_FUNCS ".godotsharp_array_new_copy(%1);\n";
+	itype.cs_in_expr = "(%1)(%0 ?? new()).NativeValue";
 	itype.c_out = "%5return %0.CreateTakingOwnershipOfDisposableValue(%1);\n";
-	itype.c_arg_in = "&%s_in";
+	itype.c_arg_in = "&%s";
 	itype.c_type = "godot_array";
-	itype.c_type_in = "ref " + itype.c_type;
+	itype.c_type_in = itype.c_type;
 	itype.c_type_out = itype.cs_type;
 	builtin_types.insert(itype.cname, itype);
 
@@ -3358,12 +3424,11 @@ void BindingsGenerator::_populate_builtin_type_interfaces() {
 	itype.cname = itype.name;
 	itype.proxy_name = itype.name;
 	itype.cs_type = BINDINGS_NAMESPACE_COLLECTIONS "." + itype.proxy_name;
-	itype.cs_in = "ref %0.NativeValue";
-	itype.c_in = "%5using %0 %1_in = " C_CLASS_NATIVE_FUNCS ".godotsharp_dictionary_new_copy(%1);\n";
+	itype.cs_in_expr = "(%1)(%0 ?? new()).NativeValue";
 	itype.c_out = "%5return %0.CreateTakingOwnershipOfDisposableValue(%1);\n";
-	itype.c_arg_in = "&%s_in";
+	itype.c_arg_in = "&%s";
 	itype.c_type = "godot_dictionary";
-	itype.c_type_in = "ref " + itype.c_type;
+	itype.c_type_in = itype.c_type;
 	itype.c_type_out = itype.cs_type;
 	builtin_types.insert(itype.cname, itype);
 

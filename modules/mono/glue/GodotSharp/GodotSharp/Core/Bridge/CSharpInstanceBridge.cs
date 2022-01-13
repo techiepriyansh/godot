@@ -12,21 +12,28 @@ namespace Godot.Bridge
         {
             try
             {
-                // Performance is not critical here as this will be replaced with source generators.
                 var godotObject = (Object)GCHandle.FromIntPtr(godotObjectGCHandle).Target;
 
                 if (godotObject == null)
                 {
                     *ret = default;
-                    (*refCallError).error = godot_variant_call_error_error.GODOT_CALL_ERROR_CALL_ERROR_INSTANCE_IS_NULL;
+                    (*refCallError).Error = godot_variant_call_error_error.GODOT_CALL_ERROR_CALL_ERROR_INSTANCE_IS_NULL;
                     return false.ToGodotBool();
                 }
 
-                using godot_string dest = default;
-                NativeFuncs.godotsharp_string_name_as_string(&dest, method);
-                string methodStr = Marshaling.mono_string_from_godot(dest);
+                bool methodInvoked = godotObject.InvokeGodotClassMethod(CustomUnsafe.AsRef(method),
+                    new NativeVariantPtrArgs(args),
+                    argCount, out godot_variant retValue);
 
-                _ = godotObject.InternalGodotScriptCall(methodStr, args, argCount, out godot_variant retValue);
+                if (!methodInvoked)
+                {
+                    *ret = default;
+                    // This is important, as it tells Object::call that no method was called.
+                    // Otherwise, it would prevent Object::call from calling native methods.
+                    (*refCallError).Error = godot_variant_call_error_error.GODOT_CALL_ERROR_CALL_ERROR_INVALID_METHOD;
+                    return false.ToGodotBool();
+                }
+
                 *ret = retValue;
                 return true.ToGodotBool();
             }
@@ -43,19 +50,20 @@ namespace Godot.Bridge
         {
             try
             {
-                // Performance is not critical here as this will be replaced with source generators.
                 var godotObject = (Object)GCHandle.FromIntPtr(godotObjectGCHandle).Target;
 
                 if (godotObject == null)
                     throw new InvalidOperationException();
 
-                var nameManaged = StringName.CreateTakingOwnershipOfDisposableValue(
-                    NativeFuncs.godotsharp_string_name_new_copy(name));
-
-                if (godotObject.InternalGodotScriptSetFieldOrPropViaReflection(nameManaged.ToString(), value))
+                if (godotObject.SetGodotClassPropertyValue(CustomUnsafe.AsRef(name), CustomUnsafe.AsRef(value)))
+                {
                     return true.ToGodotBool();
+                }
 
-                object valueManaged = Marshaling.variant_to_mono_object(value);
+                var nameManaged = StringName.CreateTakingOwnershipOfDisposableValue(
+                    NativeFuncs.godotsharp_string_name_new_copy(CustomUnsafe.AsRef(name)));
+
+                object valueManaged = Marshaling.ConvertVariantToManagedObject(CustomUnsafe.AsRef(value));
 
                 return godotObject._Set(nameManaged, valueManaged).ToGodotBool();
             }
@@ -72,21 +80,19 @@ namespace Godot.Bridge
         {
             try
             {
-                // Performance is not critical here as this will be replaced with source generators.
                 var godotObject = (Object)GCHandle.FromIntPtr(godotObjectGCHandle).Target;
 
                 if (godotObject == null)
                     throw new InvalidOperationException();
 
-                var nameManaged = StringName.CreateTakingOwnershipOfDisposableValue(
-                    NativeFuncs.godotsharp_string_name_new_copy(name));
-
-                if (godotObject.InternalGodotScriptGetFieldOrPropViaReflection(nameManaged.ToString(),
-                    out godot_variant outRetValue))
+                if (godotObject.GetGodotClassPropertyValue(CustomUnsafe.AsRef(name), out godot_variant outRetValue))
                 {
                     *outRet = outRetValue;
                     return true.ToGodotBool();
                 }
+
+                var nameManaged = StringName.CreateTakingOwnershipOfDisposableValue(
+                    NativeFuncs.godotsharp_string_name_new_copy(CustomUnsafe.AsRef(name)));
 
                 object ret = godotObject._Get(nameManaged);
 
@@ -96,7 +102,7 @@ namespace Godot.Bridge
                     return false.ToGodotBool();
                 }
 
-                *outRet = Marshaling.mono_object_to_variant(ret);
+                *outRet = Marshaling.ConvertManagedObjectToVariant(ret);
                 return true.ToGodotBool();
             }
             catch (Exception e)
@@ -148,7 +154,7 @@ namespace Godot.Bridge
                     return;
                 }
 
-                *outRes = Marshaling.mono_string_to_godot(resultStr);
+                *outRes = Marshaling.ConvertStringToNative(resultStr);
                 *outValid = true.ToGodotBool();
             }
             catch (Exception e)
@@ -156,6 +162,25 @@ namespace Godot.Bridge
                 ExceptionUtils.DebugPrintUnhandledException(e);
                 *outRes = default;
                 *outValid = false.ToGodotBool();
+            }
+        }
+
+        [UnmanagedCallersOnly]
+        internal static unsafe godot_bool HasMethodUnknownParams(IntPtr godotObjectGCHandle, godot_string_name* method)
+        {
+            try
+            {
+                var godotObject = (Object)GCHandle.FromIntPtr(godotObjectGCHandle).Target;
+
+                if (godotObject == null)
+                    return false.ToGodotBool();
+
+                return godotObject.HasGodotClassMethod(CustomUnsafe.AsRef(method)).ToGodotBool();
+            }
+            catch (Exception e)
+            {
+                ExceptionUtils.DebugPrintUnhandledException(e);
+                return false.ToGodotBool();
             }
         }
     }

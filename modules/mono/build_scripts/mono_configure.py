@@ -25,18 +25,22 @@ def configure(env, env_mono):
     if tools_enabled and not module_supports_tools_on(env["platform"]):
         raise RuntimeError("This module does not currently support building for this platform with tools enabled")
 
-    if env["tools"] or env["target"] != "release":
+    if env["tools"]:
         env_mono.Append(CPPDEFINES=["GD_MONO_HOT_RELOAD"])
+
+    dotnet_version = "5.0"
 
     dotnet_root = env["dotnet_root"]
 
     if not dotnet_root:
-        dotnet_exe = find_executable("dotnet")
-        if dotnet_exe:
-            dotnet_exe_realpath = os.path.realpath(dotnet_exe)  # Eliminate symbolic links
-            dotnet_root = os.path.abspath(os.path.join(dotnet_exe_realpath, os.pardir))
-        else:
-            raise RuntimeError("Cannot find .NET Core Sdk")
+        dotnet_cmd = find_executable("dotnet")
+        if dotnet_cmd:
+            sdk_path = find_dotnet_sdk(dotnet_cmd, dotnet_version)
+            if sdk_path:
+                dotnet_root = os.path.abspath(os.path.join(sdk_path, os.pardir))
+
+    if not dotnet_root:
+        raise RuntimeError("Cannot find .NET Core Sdk")
 
     print("Found .NET Core Sdk root directory: " + dotnet_root)
 
@@ -46,10 +50,9 @@ def configure(env, env_mono):
 
     # TODO: In the future, if it can't be found this way, we want to obtain it
     # from the runtime.{runtime_identifier}.Microsoft.NETCore.DotNetAppHost NuGet package.
-    app_host_search_version = "5.0"
-    app_host_version = find_app_host_version(dotnet_cmd, app_host_search_version)
+    app_host_version = find_app_host_version(dotnet_cmd, dotnet_version)
     if not app_host_version:
-        raise RuntimeError("Cannot find .NET app host for version: " + app_host_search_version)
+        raise RuntimeError("Cannot find .NET app host for version: " + dotnet_version)
 
     app_host_dir = os.path.join(
         dotnet_root,
@@ -78,27 +81,31 @@ def configure(env, env_mono):
     check_app_host_file_exists("hostfxr.h")
     check_app_host_file_exists("coreclr_delegates.h")
 
-    env.Append(LIBPATH=[app_host_dir])
     env_mono.Prepend(CPPPATH=app_host_dir)
 
-    libnethost_path = os.path.join(app_host_dir, "libnethost.lib" if os.name == "nt" else "libnethost.a")
+    env.Append(LIBPATH=[app_host_dir])
 
-    if env["platform"] == "windows":
-        if env.msvc:
-            env.Append(LINKFLAGS="libnethost.lib")
+    # Only the editor build  links nethost, which is needed to find hostfxr.
+    # Exported games don't need this logic as hostfxr is bundled with them.
+    if tools_enabled:
+        libnethost_path = os.path.join(app_host_dir, "libnethost.lib" if os.name == "nt" else "libnethost.a")
+
+        if env["platform"] == "windows":
+            if env.msvc:
+                env.Append(LINKFLAGS="libnethost.lib")
+            else:
+                env.Append(LINKFLAGS=["-Wl,-whole-archive", libnethost_path, "-Wl,-no-whole-archive"])
         else:
-            env.Append(LINKFLAGS=["-Wl,-whole-archive", libnethost_path, "-Wl,-no-whole-archive"])
-    else:
-        is_apple = env["platform"] in ["osx", "iphone"]
-        # is_macos = is_apple and not is_ios
+            is_apple = env["platform"] in ["osx", "iphone"]
+            # is_macos = is_apple and not is_ios
 
-        # if is_ios and not is_ios_sim:
-        #     env_mono.Append(CPPDEFINES=["IOS_DEVICE"])
+            # if is_ios and not is_ios_sim:
+            #     env_mono.Append(CPPDEFINES=["IOS_DEVICE"])
 
-        if is_apple:
-            env.Append(LINKFLAGS=["-Wl,-force_load," + libnethost_path])
-        else:
-            env.Append(LINKFLAGS=["-Wl,-whole-archive", libnethost_path, "-Wl,-no-whole-archive"])
+            if is_apple:
+                env.Append(LINKFLAGS=["-Wl,-force_load," + libnethost_path])
+            else:
+                env.Append(LINKFLAGS=["-Wl,-whole-archive", libnethost_path, "-Wl,-no-whole-archive"])
 
 
 def determine_runtime_identifier(env):
@@ -121,28 +128,70 @@ def determine_runtime_identifier(env):
         raise NotImplementedError()
 
 
-def find_app_host_version(dotnet_cmd, search_version):
+def find_app_host_version(dotnet_cmd, search_version_str):
     import subprocess
+    from distutils.version import LooseVersion
+
+    search_version = LooseVersion(search_version_str)
 
     try:
-        lines = subprocess.check_output([dotnet_cmd, "--list-runtimes"]).splitlines()
+        env = dict(os.environ, DOTNET_CLI_UI_LANGUAGE="en-US")
+        lines = subprocess.check_output([dotnet_cmd, "--list-runtimes"], env=env).splitlines()
 
         for line_bytes in lines:
             line = line_bytes.decode("utf-8")
             if not line.startswith("Microsoft.NETCore.App "):
                 continue
 
-            parts = line.split(" ")
+            parts = line.split(" ", 2)
+            if len(parts) < 3:
+                continue
+
+            version_str = parts[1]
+
+            version = LooseVersion(version_str)
+
+            if version >= search_version:
+                return version_str
+    except (subprocess.CalledProcessError, OSError) as e:
+        import sys
+
+        print(e, file=sys.stderr)
+
+    return ""
+
+
+def find_dotnet_sdk(dotnet_cmd, search_version_str):
+    import subprocess
+    from distutils.version import LooseVersion
+
+    search_version = LooseVersion(search_version_str)
+
+    try:
+        env = dict(os.environ, DOTNET_CLI_UI_LANGUAGE="en-US")
+        lines = subprocess.check_output([dotnet_cmd, "--list-sdks"], env=env).splitlines()
+
+        for line_bytes in lines:
+            line = line_bytes.decode("utf-8")
+
+            parts = line.split(" ", 1)
             if len(parts) < 2:
                 continue
 
-            version = parts[1]
+            version_str = parts[0]
 
-            # Look for 6.0.0 or 6.0.0-*
-            if version.startswith(search_version + "."):
-                return version
-    except (subprocess.CalledProcessError, OSError):
-        pass
+            version = LooseVersion(version_str)
+
+            if version < search_version:
+                continue
+
+            path_part = parts[1]
+            return path_part[1 : path_part.find("]")]
+    except (subprocess.CalledProcessError, OSError) as e:
+        import sys
+
+        print(e, file=sys.stderr)
+
     return ""
 
 

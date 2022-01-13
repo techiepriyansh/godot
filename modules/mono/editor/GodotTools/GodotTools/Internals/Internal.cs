@@ -1,5 +1,4 @@
 using System;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Godot;
 using Godot.NativeInterop;
@@ -18,21 +17,21 @@ namespace GodotTools.Internals
             {
                 godot_icall_Internal_FullTemplatesDir(out godot_string dest);
                 using (dest)
-                    return Marshaling.mono_string_from_godot(dest);
+                    return Marshaling.ConvertStringToManaged(dest);
             }
         }
 
         public static string SimplifyGodotPath(this string path)
         {
-            using godot_string pathIn = Marshaling.mono_string_to_godot(path);
+            using godot_string pathIn = Marshaling.ConvertStringToNative(path);
             godot_icall_Internal_SimplifyGodotPath(pathIn, out godot_string dest);
             using (dest)
-                return Marshaling.mono_string_from_godot(dest);
+                return Marshaling.ConvertStringToManaged(dest);
         }
 
         public static bool IsOsxAppBundleInstalled(string bundleId)
         {
-            using godot_string bundleIdIn = Marshaling.mono_string_to_godot(bundleId);
+            using godot_string bundleIdIn = Marshaling.ConvertStringToNative(bundleId);
             return godot_icall_Internal_IsOsxAppBundleInstalled(bundleIdIn);
         }
 
@@ -53,16 +52,6 @@ namespace GodotTools.Internals
 
         public static void EditorNodeShowScriptScreen() => godot_icall_Internal_EditorNodeShowScriptScreen();
 
-        public static string MonoWindowsInstallRoot
-        {
-            get
-            {
-                godot_icall_Internal_MonoWindowsInstallRoot(out godot_string dest);
-                using (dest)
-                    return Marshaling.mono_string_from_godot(dest);
-            }
-        }
-
         public static void EditorRunPlay() => godot_icall_Internal_EditorRunPlay();
 
         public static void EditorRunStop() => godot_icall_Internal_EditorRunStop();
@@ -70,13 +59,13 @@ namespace GodotTools.Internals
         public static void ScriptEditorDebugger_ReloadScripts() =>
             godot_icall_Internal_ScriptEditorDebugger_ReloadScripts();
 
-        public static unsafe string[] CodeCompletionRequest(CodeCompletionRequest.CompletionKind kind,
+        public static string[] CodeCompletionRequest(CodeCompletionRequest.CompletionKind kind,
             string scriptFile)
         {
-            using godot_string scriptFileIn = Marshaling.mono_string_to_godot(scriptFile);
+            using godot_string scriptFileIn = Marshaling.ConvertStringToNative(scriptFile);
             godot_icall_Internal_CodeCompletionRequest((int)kind, scriptFileIn, out godot_packed_string_array res);
             using (res)
-                return Marshaling.PackedStringArray_to_mono_array(&res);
+                return Marshaling.ConvertNativePackedStringArrayToSystemArray(res);
         }
 
         #region Internal
@@ -85,9 +74,6 @@ namespace GodotTools.Internals
 
         [DllImport(GodotDllName)]
         public static extern void godot_icall_GodotSharpDirs_ResMetadataDir(out godot_string r_dest);
-
-        [DllImport(GodotDllName)]
-        public static extern void godot_icall_GodotSharpDirs_ResTempAssembliesBaseDir(out godot_string r_dest);
 
         [DllImport(GodotDllName)]
         public static extern void godot_icall_GodotSharpDirs_MonoUserDir(out godot_string r_dest);
@@ -148,9 +134,6 @@ namespace GodotTools.Internals
 
         [DllImport(GodotDllName)]
         private static extern void godot_icall_Internal_EditorNodeShowScriptScreen();
-
-        [DllImport(GodotDllName)]
-        private static extern void godot_icall_Internal_MonoWindowsInstallRoot(out godot_string dest);
 
         [DllImport(GodotDllName)]
         private static extern void godot_icall_Internal_EditorRunPlay();

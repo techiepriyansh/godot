@@ -8,7 +8,7 @@ using Godot.NativeInterop;
 
 namespace Godot.Bridge
 {
-    internal static class ScriptManagerBridge
+    public static class ScriptManagerBridge
     {
         private static System.Collections.Generic.Dictionary<string, ScriptLookupInfo> _scriptLookupMap = new();
         private static System.Collections.Generic.Dictionary<IntPtr, Type> _scriptBridgeMap = new();
@@ -44,12 +44,14 @@ namespace Godot.Bridge
         internal static unsafe IntPtr CreateManagedForGodotObjectBinding(godot_string_name* nativeTypeName,
             IntPtr godotObject)
         {
+            // TODO: Optimize with source generators and delegate pointers
+
             try
             {
                 Type nativeType = TypeGetProxyClass(nativeTypeName);
                 var obj = (Object)FormatterServices.GetUninitializedObject(nativeType);
 
-                obj.NativePtr = godotObject;
+                Object.HandlePendingForNextInstance = godotObject;
 
                 var ctor = nativeType.GetConstructor(
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
@@ -70,13 +72,15 @@ namespace Godot.Bridge
             IntPtr godotObject,
             godot_variant** args, int argCount)
         {
+            // TODO: Optimize with source generators and delegate pointers
+
             try
             {
                 // Performance is not critical here as this will be replaced with source generators.
                 Type scriptType = _scriptBridgeMap[scriptPtr];
                 var obj = (Object)FormatterServices.GetUninitializedObject(scriptType);
 
-                obj.NativePtr = godotObject;
+                Object.HandlePendingForNextInstance = godotObject;
 
                 var ctor = scriptType
                     .GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
@@ -104,8 +108,8 @@ namespace Godot.Bridge
 
                 for (int i = 0; i < paramCount; i++)
                 {
-                    invokeParams[i] = Marshaling.variant_to_mono_object_of_type(
-                        args[i], parameters[i].ParameterType);
+                    invokeParams[i] = Marshaling.ConvertVariantToManagedObjectOfType(
+                        *args[i], parameters[i].ParameterType);
                 }
 
                 ctor.Invoke(obj, invokeParams);
@@ -149,7 +153,7 @@ namespace Godot.Bridge
                     return;
                 }
 
-                *outRes = NativeFuncs.godotsharp_string_name_new_copy(nativeName.NativeValue);
+                *outRes = NativeFuncs.godotsharp_string_name_new_copy((godot_string_name)nativeName.NativeValue);
             }
             catch (Exception e)
             {
@@ -177,7 +181,7 @@ namespace Godot.Bridge
         {
             // Performance is not critical here as this will be replaced with a generated dictionary.
             using var stringName = StringName.CreateTakingOwnershipOfDisposableValue(
-                NativeFuncs.godotsharp_string_name_new_copy(nativeTypeName));
+                NativeFuncs.godotsharp_string_name_new_copy(CustomUnsafe.AsRef(nativeTypeName)));
             string nativeTypeNameStr = stringName.ToString();
 
             if (nativeTypeNameStr[0] == '_')
@@ -205,7 +209,7 @@ namespace Godot.Bridge
 
         // Called from GodotPlugins
         // ReSharper disable once UnusedMember.Local
-        private static void LookupScriptsInAssembly(Assembly assembly)
+        public static void LookupScriptsInAssembly(Assembly assembly)
         {
             static void LookupScriptForClass(Type type)
             {
@@ -277,7 +281,8 @@ namespace Godot.Bridge
 
                 *outOwnerIsNull = false.ToGodotBool();
 
-                owner.InternalRaiseEventSignal(eventSignalName, args, argCount);
+                owner.InternalRaiseEventSignal(CustomUnsafe.AsRef(eventSignalName),
+                    new NativeVariantPtrArgs(args), argCount);
             }
             catch (Exception e)
             {
@@ -302,9 +307,10 @@ namespace Godot.Bridge
                     // Legacy signals
 
                     foreach (var signalDelegate in top
-                        .GetNestedTypes(BindingFlags.DeclaredOnly | BindingFlags.NonPublic | BindingFlags.Public)
-                        .Where(nestedType => typeof(Delegate).IsAssignableFrom(nestedType))
-                        .Where(@delegate => @delegate.GetCustomAttributes().OfType<SignalAttribute>().Any()))
+                                 .GetNestedTypes(BindingFlags.DeclaredOnly | BindingFlags.NonPublic |
+                                                 BindingFlags.Public)
+                                 .Where(nestedType => typeof(Delegate).IsAssignableFrom(nestedType))
+                                 .Where(@delegate => @delegate.GetCustomAttributes().OfType<SignalAttribute>().Any()))
                     {
                         var invokeMethod = signalDelegate.GetMethod("Invoke");
 
@@ -315,7 +321,7 @@ namespace Godot.Bridge
 
                         foreach (var parameters in invokeMethod.GetParameters())
                         {
-                            var paramType = Marshaling.managed_to_variant_type(
+                            var paramType = Marshaling.ConvertManagedTypeToVariantType(
                                 parameters.ParameterType, out bool nilIsVariant);
                             signalParams.Add(new Dictionary()
                             {
@@ -341,8 +347,8 @@ namespace Godot.Bridge
                         BindingFlags.NonPublic | BindingFlags.Public);
 
                     foreach (var eventSignalField in fields
-                        .Where(f => typeof(Delegate).IsAssignableFrom(f.FieldType))
-                        .Where(f => foundEventSignals.Contains(f.Name)))
+                                 .Where(f => typeof(Delegate).IsAssignableFrom(f.FieldType))
+                                 .Where(f => foundEventSignals.Contains(f.Name)))
                     {
                         var delegateType = eventSignalField.FieldType;
                         var invokeMethod = delegateType.GetMethod("Invoke");
@@ -354,7 +360,7 @@ namespace Godot.Bridge
 
                         foreach (var parameters in invokeMethod.GetParameters())
                         {
-                            var paramType = Marshaling.managed_to_variant_type(
+                            var paramType = Marshaling.ConvertManagedTypeToVariantType(
                                 parameters.ParameterType, out bool nilIsVariant);
                             signalParams.Add(new Dictionary()
                             {
@@ -370,7 +376,7 @@ namespace Godot.Bridge
                     top = top.BaseType;
                 }
 
-                *outRetSignals = NativeFuncs.godotsharp_dictionary_new_copy(signals.NativeValue);
+                *outRetSignals = NativeFuncs.godotsharp_dictionary_new_copy((godot_dictionary)signals.NativeValue);
             }
             catch (Exception e)
             {
@@ -387,7 +393,7 @@ namespace Godot.Bridge
                 // Performance is not critical here as this will be replaced with source generators.
                 using var signals = new Dictionary();
 
-                string signalNameStr = Marshaling.mono_string_from_godot(*signalName);
+                string signalNameStr = Marshaling.ConvertStringToManaged(*signalName);
 
                 Type top = _scriptBridgeMap[scriptPtr];
                 Type native = Object.InternalGetClassNativeBase(top);
@@ -401,7 +407,7 @@ namespace Godot.Bridge
                         .Where(nestedType => typeof(Delegate).IsAssignableFrom(nestedType))
                         .Where(@delegate => @delegate.GetCustomAttributes().OfType<SignalAttribute>().Any())
                         .Any(signalDelegate => signalDelegate.Name == signalNameStr)
-                    )
+                       )
                     {
                         return true.ToGodotBool();
                     }
@@ -413,7 +419,7 @@ namespace Godot.Bridge
                             BindingFlags.NonPublic | BindingFlags.Public)
                         .Where(ev => ev.GetCustomAttributes().OfType<SignalAttribute>().Any())
                         .Any(eventSignal => eventSignal.Name == signalNameStr)
-                    )
+                       )
                     {
                         return true.ToGodotBool();
                     }
@@ -422,68 +428,6 @@ namespace Godot.Bridge
                 }
 
                 return false.ToGodotBool();
-            }
-            catch (Exception e)
-            {
-                ExceptionUtils.DebugUnhandledException(e);
-                return false.ToGodotBool();
-            }
-        }
-
-        [UnmanagedCallersOnly]
-        internal static unsafe godot_bool HasMethodUnknownParams(IntPtr scriptPtr, godot_string* method,
-            godot_bool deep)
-        {
-            try
-            {
-                // Performance is not critical here as this will be replaced with source generators.
-                if (!_scriptBridgeMap.TryGetValue(scriptPtr, out var scriptType))
-                    return false.ToGodotBool();
-
-                string methodStr = Marshaling.mono_string_from_godot(*method);
-
-                if (deep.ToBool())
-                {
-                    Type top = scriptType;
-                    Type native = Object.InternalGetClassNativeBase(scriptType);
-
-                    while (top != null && top != native)
-                    {
-                        var methodInfo = top.GetMethod(methodStr,
-                            BindingFlags.DeclaredOnly | BindingFlags.Instance |
-                            BindingFlags.NonPublic | BindingFlags.Public);
-
-                        if (methodInfo != null)
-                            return true.ToGodotBool();
-
-                        top = top.BaseType;
-                    }
-
-                    top = native;
-                    Type typeOfSystemObject = typeof(System.Object);
-                    while (top != null && top != typeOfSystemObject)
-                    {
-                        bool found = top.GetMethods(BindingFlags.DeclaredOnly | BindingFlags.Instance |
-                                                    BindingFlags.NonPublic | BindingFlags.Public)
-                            .Where(m => m.GetCustomAttributes(false).OfType<GodotMethodAttribute>()
-                                .Where(a => a.MethodName == methodStr)
-                                .Any())
-                            .Any();
-
-                        if (found)
-                            return true.ToGodotBool();
-
-                        top = top.BaseType;
-                    }
-
-                    return false.ToGodotBool();
-                }
-                else
-                {
-                    var methodInfo = scriptType.GetMethod(methodStr, BindingFlags.DeclaredOnly | BindingFlags.Instance |
-                                                                     BindingFlags.NonPublic | BindingFlags.Public);
-                    return (methodInfo != null).ToGodotBool();
-                }
             }
             catch (Exception e)
             {
@@ -517,7 +461,7 @@ namespace Godot.Bridge
         {
             try
             {
-                string scriptPathStr = Marshaling.mono_string_from_godot(*scriptPath);
+                string scriptPathStr = Marshaling.ConvertStringToManaged(*scriptPath);
 
                 if (!_scriptLookupMap.TryGetValue(scriptPathStr, out var lookupInfo))
                     return false.ToGodotBool();
@@ -624,7 +568,8 @@ namespace Godot.Bridge
                 }
 
                 *outRpcFunctionsDest =
-                    NativeFuncs.godotsharp_dictionary_new_copy(((Dictionary)rpcFunctions).NativeValue);
+                    NativeFuncs.godotsharp_dictionary_new_copy(
+                        (godot_dictionary)((Dictionary)rpcFunctions).NativeValue);
             }
             catch (Exception e)
             {
