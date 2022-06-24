@@ -386,7 +386,7 @@ void main() {
 					}
 				}
 
-				float r = randomize(noise);
+				float r = sqrt(randomize(noise));
 				float a = randomize(noise) * 2.0 * PI;
 				vec2 disk_sample = (r * vec2(cos(a), sin(a))) * soft_shadowing_disk_size * lights.data[i].shadow_blur;
 				light_disk_to_point = normalize(light_to_point + disk_sample.x * light_to_point_tan + disk_sample.y * light_to_point_bitan);
